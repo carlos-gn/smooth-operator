@@ -1,0 +1,10 @@
+apiVersion: mcp.mcp.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: seville-weather
+  namespace: default
+spec:
+  image: seville-weather:latest
+  replicas: 1
+  port: 8080
+  secretName: openweather-secret
