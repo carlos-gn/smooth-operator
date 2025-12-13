@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -42,6 +43,7 @@ type MCPServerReconciler struct {
 // +kubebuilder:rbac:groups=mcp.mcp.dev,resources=mcpservers/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mcp.mcp.dev,resources=mcpservers/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
@@ -79,46 +81,98 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					},
 				},
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:            "mcp-server",
-						Image:           mcpServer.Spec.Image,
-						ImagePullPolicy: corev1.PullNever,
-						Ports: []corev1.ContainerPort{{
-							ContainerPort: mcpServer.Spec.Port, Name: "http",
-						}},
-						Env: []corev1.EnvVar{{
-							Name: "OPENWEATHER_API_KEY",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: mcpServer.Spec.SecretName,
+					Containers: []corev1.Container{
+						{
+							Name:            "mcp-server",
+							Image:           mcpServer.Spec.Image,
+							ImagePullPolicy: corev1.PullNever,
+							Ports: []corev1.ContainerPort{{
+								ContainerPort: mcpServer.Spec.Port, Name: "http",
+							}},
+							Env: []corev1.EnvVar{{
+								Name: "OPENWEATHER_API_KEY",
+								ValueFrom: &corev1.EnvVarSource{
+									SecretKeyRef: &corev1.SecretKeySelector{
+										LocalObjectReference: corev1.LocalObjectReference{
+											Name: mcpServer.Spec.SecretName,
+										},
+										Key: "OPENWEATHER_API_KEY",
 									},
-									Key: "OPENWEATHER_API_KEY",
 								},
+							}},
+							LivenessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health",
+										Port: intstr.FromInt(int(mcpServer.Spec.Port)),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       5,
 							},
-						}},
-					}},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									HTTPGet: &corev1.HTTPGetAction{
+										Path: "/health",
+										Port: intstr.FromInt(int(mcpServer.Spec.Port)),
+									},
+								},
+								InitialDelaySeconds: 5,
+								PeriodSeconds:       5,
+							},
+						},
+					},
 				},
 			},
 		},
 	}
-
 	ctrl.SetControllerReference(mcpServer, deployment, r.Scheme)
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		deployment.Spec.Replicas = &mcpServer.Spec.Replicas
-		deployment.Spec.Template.Spec.Containers[0].Image =
-			mcpServer.Spec.Image
+		deployment.Spec.Template.Spec.Containers[0].Image = mcpServer.Spec.Image
 		deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = mcpServer.Spec.Port
 		return ctrl.SetControllerReference(mcpServer,
 			deployment, r.Scheme)
 	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mcpServer.Name,
+			Namespace: mcpServer.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": mcpServer.Name,
+			},
+			Ports: []corev1.ServicePort{{
+				Name:       "http",
+				Port:       mcpServer.Spec.Port,
+				TargetPort: intstr.FromInt(int(mcpServer.Spec.Port)),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	ctrl.SetControllerReference(mcpServer, service, r.Scheme)
+
+	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, service, func() error {
+		service.Spec.Selector = map[string]string{"app": mcpServer.Name}
+		service.Spec.Ports[0].Port = mcpServer.Spec.Port
+		return ctrl.SetControllerReference(mcpServer, service, r.Scheme)
+	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	err = r.Get(ctx, client.ObjectKey{
 		Namespace: mcpServer.Namespace,
 		Name:      mcpServer.Name,
 	}, deployment)
-
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -132,7 +186,6 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	err = r.Status().Update(ctx, mcpServer)
-
 	if err != nil {
 		return ctrl.Result{}, err
 	}

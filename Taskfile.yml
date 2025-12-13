@@ -1,0 +1,110 @@
+version: '3'
+
+vars:
+  CONTROLLER_GEN: ./bin/controller-gen
+  IMG: controller:latest
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  manifests:
+    desc: Generate CRD and RBAC manifests
+    cmds:
+      - "{{.CONTROLLER_GEN}} rbac:roleName=manager-role crd webhook paths=\"./...\" output:crd:artifacts:config=config/crd/bases"
+
+  generate:
+    desc: Generate code (DeepCopy methods)
+    cmds:
+      - "{{.CONTROLLER_GEN}} object:headerFile=\"hack/boilerplate.go.txt\" paths=\"./...\""
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./... -coverprofile cover.out
+
+  build:
+    desc: Build operator binary
+    cmds:
+      - go build -o bin/manager cmd/main.go
+
+  run:
+    desc: Run operator locally
+    deps: [manifests, generate, fmt, vet]
+    cmds:
+      - go run ./cmd/main.go
+
+  install:
+    desc: Install CRDs to cluster
+    deps: [manifests]
+    cmds:
+      - kubectl apply -f config/crd/bases
+
+  uninstall:
+    desc: Uninstall CRDs from cluster
+    deps: [manifests]
+    cmds:
+      - kubectl delete -f config/crd/bases
+
+  docker-build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t {{.IMG}} .
+
+  docker-push:
+    desc: Push Docker image
+    cmds:
+      - docker push {{.IMG}}
+
+  deploy:
+    desc: Deploy operator to cluster
+    deps: [manifests]
+    cmds:
+      - cd config/manager && kustomize edit set image controller={{.IMG}}
+      - kubectl apply -k config/default
+
+  undeploy:
+    desc: Undeploy operator from cluster
+    cmds:
+      - kubectl delete -k config/default
+
+  # Development shortcuts
+  dev:
+    desc: Quick development loop (install + run)
+    cmds:
+      - task install
+      - task run
+
+  clean:
+    desc: Clean generated files
+    cmds:
+      - rm -rf bin/
+      - rm -f cover.out
+
+  # Helper tasks
+  create-cluster:
+    desc: Create local kind cluster
+    cmds:
+      - kind create cluster --name mcp-dev
+
+  delete-cluster:
+    desc: Delete local kind cluster
+    cmds:
+      - kind delete cluster --name mcp-dev
+
+  load-image:
+    desc: Load Docker image into kind
+    cmds:
+      - kind load docker-image {{.IMG}} --name mcp-dev
