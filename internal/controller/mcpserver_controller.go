@@ -114,6 +114,25 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			deployment, r.Scheme)
 	})
 
+	err = r.Get(ctx, client.ObjectKey{
+		Namespace: mcpServer.Namespace,
+		Name:      mcpServer.Name,
+	}, deployment)
+
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	mcpServer.Status.AvailableReplicas = deployment.Status.AvailableReplicas
+
+	if mcpServer.Status.AvailableReplicas == mcpServer.Spec.Replicas {
+		mcpServer.Status.Phase = "Running"
+	} else {
+		mcpServer.Status.Phase = "Pending"
+	}
+
+	err = r.Status().Update(ctx, mcpServer)
+
 	if err != nil {
 		return ctrl.Result{}, err
 	}
