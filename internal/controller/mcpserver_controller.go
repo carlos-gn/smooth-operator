@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -54,12 +55,27 @@ type MCPServerReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
+	startTime := time.Now()
+
+	defer func() {
+		duration := time.Since(startTime).Seconds()
+		reconcileTime.WithLabelValues(req.Namespace).Observe(duration)
+		log.V(1).Info("Reconciliation complete", "duration", duration)
+	}()
+
+	log.Info("Starting reconciliation", "namespace", req.Namespace, "name", req.Name)
 
 	mcpServer := &mcpv1alpha1.MCPServer{}
 	err := r.Get(ctx, req.NamespacedName, mcpServer)
 	if err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) == nil {
+			log.Info("MCPServer deleted, removing metrics")
+			mcpServersTotal.WithLabelValues(req.Namespace).Dec()
+			return ctrl.Result{}, nil
+		}
+		log.Error(err, "Failed to get MCPServer")
+		return ctrl.Result{}, err
 	}
 
 	deployment := &appsv1.Deployment{
@@ -136,8 +152,12 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			deployment, r.Scheme)
 	})
 	if err != nil {
+		log.Error(err, "Failed to create/update deployment", "deployment", deployment.Name, "image", mcpServer.Spec.Image)
+		deploymentCreationErrors.WithLabelValues(mcpServer.Namespace, mcpServer.Name).Inc()
 		return ctrl.Result{}, err
 	}
+
+	log.Info("Deployment reconciled", "deployment", deployment.Name, "replicas", *&deployment.Spec.Replicas)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -166,14 +186,27 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.SetControllerReference(mcpServer, service, r.Scheme)
 	})
 	if err != nil {
+		log.Error(err, "Failed to create/update service",
+			"service", service.Name,
+		)
+		serviceCreationErrors.WithLabelValues(
+			mcpServer.Namespace,
+			mcpServer.Name,
+		).Inc()
 		return ctrl.Result{}, err
 	}
+
+	log.Info("Service reconciled",
+		"service", service.Name,
+		"port", service.Spec.Ports[0].Port,
+	)
 
 	err = r.Get(ctx, client.ObjectKey{
 		Namespace: mcpServer.Namespace,
 		Name:      mcpServer.Name,
 	}, deployment)
 	if err != nil {
+		log.Error(err, "Failed to get deployment for status update")
 		return ctrl.Result{}, err
 	}
 
@@ -187,8 +220,20 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	err = r.Status().Update(ctx, mcpServer)
 	if err != nil {
+		log.Error(err, "Failed to update status")
 		return ctrl.Result{}, err
 	}
+
+	mcpServersTotal.WithLabelValues(mcpServer.Namespace).Set(1)
+	mcpServersByPhase.WithLabelValues(
+		mcpServer.Namespace,
+		mcpServer.Status.Phase,
+	).Inc()
+
+	log.Info("Status updated",
+		"phase", mcpServer.Status.Phase,
+		"availableReplicas", mcpServer.Status.AvailableReplicas,
+	)
 
 	return ctrl.Result{}, nil
 }

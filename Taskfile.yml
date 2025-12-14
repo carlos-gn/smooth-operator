@@ -41,10 +41,10 @@ tasks:
       - go build -o bin/manager cmd/main.go
 
   run:
-    desc: Run operator locally
+    desc: Run operator locally with metrics enabled
     deps: [manifests, generate, fmt, vet]
     cmds:
-      - go run ./cmd/main.go
+      - go run ./cmd/main.go --metrics-bind-address=:8080 --metrics-secure=false
 
   install:
     desc: Install CRDs to cluster
