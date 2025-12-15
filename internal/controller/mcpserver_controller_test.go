@@ -18,67 +18,247 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	mcpv1alpha1 "github.com/carlos-gn/smooth-operator/api/v1alpha1"
 )
 
+const (
+	timeout  = time.Second * 10
+	interval = time.Millisecond * 250
+)
+
 var _ = Describe("MCPServer Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+	Context("When creating an MCPServer", func() {
+		It("should create a Deployment with correct spec", func() {
+			ctx := context.Background()
+			resourceName := fmt.Sprintf("test-deploy-%d", time.Now().UnixNano())
 
-		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		mcpserver := &mcpv1alpha1.MCPServer{}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind MCPServer")
-			err := k8sClient.Get(ctx, typeNamespacedName, mcpserver)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &mcpv1alpha1.MCPServer{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			mcpServer := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Image:    "test-image:v1",
+					Replicas: 2,
+					Port:     8080,
+				},
 			}
+			Expect(k8sClient.Create(ctx, mcpServer)).Should(Succeed())
+
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, deployment)
+			}, timeout, interval).Should(Succeed())
+
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("test-image:v1"))
+			Expect(*deployment.Spec.Replicas).To(Equal(int32(2)))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort).To(Equal(int32(8080)))
 		})
 
-		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &mcpv1alpha1.MCPServer{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
+		It("should create a Service with correct spec", func() {
+			ctx := context.Background()
+			resourceName := fmt.Sprintf("test-service-%d", time.Now().UnixNano())
 
-			By("Cleanup the specific resource instance MCPServer")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &MCPServerReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+			mcpServer := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Image:    "test-image:v1",
+					Replicas: 1,
+					Port:     8080,
+				},
 			}
+			Expect(k8sClient.Create(ctx, mcpServer)).Should(Succeed())
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
-			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			service := &corev1.Service{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, service)
+			}, timeout, interval).Should(Succeed())
+
+			Expect(service.Spec.Ports).To(HaveLen(1))
+			Expect(service.Spec.Ports[0].Port).To(Equal(int32(8080)))
+			Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+			Expect(service.Spec.Selector).To(HaveKeyWithValue("app", resourceName))
+		})
+
+		It("should update status phase", func() {
+			ctx := context.Background()
+			resourceName := fmt.Sprintf("test-status-%d", time.Now().UnixNano())
+
+			mcpServer := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Image:    "test-image:v1",
+					Replicas: 1,
+					Port:     8080,
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).Should(Succeed())
+
+			Eventually(func() string {
+				updated := &mcpv1alpha1.MCPServer{}
+				k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, updated)
+				return updated.Status.Phase
+			}, timeout, interval).Should(Equal("Pending"))
+		})
+
+		It("should have owner references on created resources", func() {
+			ctx := context.Background()
+			resourceName := fmt.Sprintf("test-owner-%d", time.Now().UnixNano())
+
+			mcpServer := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Image:    "test-image:v1",
+					Replicas: 1,
+					Port:     8080,
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).Should(Succeed())
+
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, deployment)
+			}, timeout, interval).Should(Succeed())
+
+			Expect(deployment.OwnerReferences).To(HaveLen(1))
+			Expect(deployment.OwnerReferences[0].Kind).To(Equal("MCPServer"))
+			Expect(deployment.OwnerReferences[0].Name).To(Equal(resourceName))
+
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: "default",
+				Name:      resourceName,
+			}, service)).Should(Succeed())
+
+			Expect(service.OwnerReferences).To(HaveLen(1))
+			Expect(service.OwnerReferences[0].Kind).To(Equal("MCPServer"))
+		})
+	})
+
+	Context("When updating an MCPServer", func() {
+		It("should update Deployment when replicas change", func() {
+			ctx := context.Background()
+			resourceName := fmt.Sprintf("test-replicas-%d", time.Now().UnixNano())
+
+			mcpServer := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Image:    "test-image:v1",
+					Replicas: 1,
+					Port:     8080,
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).Should(Succeed())
+
+			// Wait for initial Deployment
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, deployment)
+			}, timeout, interval).Should(Succeed())
+
+			// Update replicas
+			updated := &mcpv1alpha1.MCPServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: "default",
+				Name:      resourceName,
+			}, updated)).Should(Succeed())
+
+			updated.Spec.Replicas = 3
+			Expect(k8sClient.Update(ctx, updated)).Should(Succeed())
+
+			// Verify Deployment is updated
+			Eventually(func() int32 {
+				k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, deployment)
+				return *deployment.Spec.Replicas
+			}, timeout, interval).Should(Equal(int32(3)))
+		})
+
+		It("should update Deployment when image changes", func() {
+			ctx := context.Background()
+			resourceName := fmt.Sprintf("test-image-%d", time.Now().UnixNano())
+
+			mcpServer := &mcpv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mcpv1alpha1.MCPServerSpec{
+					Image:    "test-image:v1",
+					Replicas: 1,
+					Port:     8080,
+				},
+			}
+			Expect(k8sClient.Create(ctx, mcpServer)).Should(Succeed())
+
+			// Wait for initial Deployment
+			deployment := &appsv1.Deployment{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, deployment)
+			}, timeout, interval).Should(Succeed())
+
+			// Update image
+			updated := &mcpv1alpha1.MCPServer{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: "default",
+				Name:      resourceName,
+			}, updated)).Should(Succeed())
+
+			updated.Spec.Image = "test-image:v2"
+			Expect(k8sClient.Update(ctx, updated)).Should(Succeed())
+
+			// Verify Deployment is updated
+			Eventually(func() string {
+				k8sClient.Get(ctx, client.ObjectKey{
+					Namespace: "default",
+					Name:      resourceName,
+				}, deployment)
+				return deployment.Spec.Template.Spec.Containers[0].Image
+			}, timeout, interval).Should(Equal("test-image:v2"))
 		})
 	})
 })

@@ -105,17 +105,6 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 							Ports: []corev1.ContainerPort{{
 								ContainerPort: mcpServer.Spec.Port, Name: "http",
 							}},
-							Env: []corev1.EnvVar{{
-								Name: "OPENWEATHER_API_KEY",
-								ValueFrom: &corev1.EnvVarSource{
-									SecretKeyRef: &corev1.SecretKeySelector{
-										LocalObjectReference: corev1.LocalObjectReference{
-											Name: mcpServer.Spec.SecretName,
-										},
-										Key: "OPENWEATHER_API_KEY",
-									},
-								},
-							}},
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
@@ -142,6 +131,22 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			},
 		},
 	}
+
+	// Add secret env var if secretName is provided
+	if mcpServer.Spec.SecretName != "" {
+		deployment.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{
+			Name: "OPENWEATHER_API_KEY",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: mcpServer.Spec.SecretName,
+					},
+					Key: "OPENWEATHER_API_KEY",
+				},
+			},
+		}}
+	}
+
 	ctrl.SetControllerReference(mcpServer, deployment, r.Scheme)
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
