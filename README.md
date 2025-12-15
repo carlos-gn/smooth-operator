@@ -211,6 +211,28 @@ task run          # Restart operator
 task run
 ```
 
+### Testing
+
+```bash
+# Run integration tests
+task test
+
+# View coverage
+go tool cover -html=cover.out
+
+# Run tests with verbose output
+go test ./... -v
+```
+
+**Test coverage:** 69.5% of controller code
+
+Tests cover:
+- Deployment creation with correct specs
+- Service creation with correct specs
+- Status updates
+- Owner references
+- Spec updates (replicas and image changes)
+
 ## Project Structure
 
 ```
@@ -235,19 +257,19 @@ task run
 ### Completed ✅
 - [x] Status updates and health reporting
 - [x] Service creation for pod exposure
-- [x] Liveness and readiness probes
+- [x] Liveness and readiness probes (HTTP GET on /health)
 - [x] Prometheus metrics and structured logging
 - [x] RBAC configuration
-
-### In Progress 🚧
-- [ ] Observability implementation (metrics collection in controller)
+- [x] Integration tests with 69.5% coverage
+- [x] Conditional secret injection
+- [x] Owner references for resource cleanup
 
 ### Planned 📋
-- [ ] Unit and integration tests
+- [ ] Helm chart for easy installation
+- [ ] CI/CD pipeline (GitHub Actions)
+- [ ] Deploy to real cluster
 - [ ] Resource limit configuration
 - [ ] Validation webhooks
-- [ ] Helm chart for easy installation
-- [ ] CI/CD pipeline
 - [ ] Multi-namespace support
 - [ ] Custom printer columns for `kubectl get`
 
