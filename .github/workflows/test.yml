@@ -2,22 +2,47 @@ name: Tests
 
 on:
   push:
+    branches: [ master, main ]
   pull_request:
+    branches: [ master, main ]
 
 jobs:
   test:
-    name: Run on Ubuntu
+    name: Run Tests
     runs-on: ubuntu-latest
+
     steps:
-      - name: Clone the code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Running Tests
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run go fmt check
         run: |
-          go mod tidy
-          make test
+          if [ -n "$(gofmt -s -l .)" ]; then
+            echo "Go code is not formatted:"
+            gofmt -s -d .
+            exit 1
+          fi
+
+      - name: Install Task
+        uses: arduino/setup-task@v1
+
+      - name: Run tests
+        run: task test
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./cover.out
+          fail_ci_if_error: false
