@@ -147,14 +147,19 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}}
 	}
 
-	ctrl.SetControllerReference(mcpServer, deployment, r.Scheme)
+	if err := ctrl.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
+		log.Error(err, "Failed to set controller reference on deployment")
+		return ctrl.Result{}, err
+	}
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, deployment, func() error {
 		deployment.Spec.Replicas = &mcpServer.Spec.Replicas
 		deployment.Spec.Template.Spec.Containers[0].Image = mcpServer.Spec.Image
 		deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = mcpServer.Spec.Port
-		return ctrl.SetControllerReference(mcpServer,
-			deployment, r.Scheme)
+		if err := ctrl.SetControllerReference(mcpServer, deployment, r.Scheme); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
 		log.Error(err, "Failed to create/update deployment", "deployment", deployment.Name, "image", mcpServer.Spec.Image)
@@ -162,7 +167,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Deployment reconciled", "deployment", deployment.Name, "replicas", *&deployment.Spec.Replicas)
+	log.Info("Deployment reconciled", "deployment", deployment.Name, "replicas", *deployment.Spec.Replicas)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -183,7 +188,10 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		},
 	}
 
-	ctrl.SetControllerReference(mcpServer, service, r.Scheme)
+	if err := ctrl.SetControllerReference(mcpServer, service, r.Scheme); err != nil {
+		log.Error(err, "Failed to set controller reference on service")
+		return ctrl.Result{}, err
+	}
 
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, service, func() error {
 		service.Spec.Selector = map[string]string{"app": mcpServer.Name}

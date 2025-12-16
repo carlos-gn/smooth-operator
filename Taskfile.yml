@@ -31,6 +31,17 @@ tasks:
     cmds:
       - go vet ./...
 
+  lint:
+    desc: Run linting tools
+    cmds:
+      - golangci-lint run ./...
+      - go vet ./...
+
+  lint-fix:
+    desc: Run linting tools, and apply fixes.
+    cmds:
+      - golangci-lint run --fix ./...
+
   envtest:
     desc: Download envtest binaries for integration tests
     cmds:

@@ -120,7 +120,7 @@ var _ = Describe("MCPServer Controller", func() {
 
 			Eventually(func() string {
 				updated := &mcpv1alpha1.MCPServer{}
-				k8sClient.Get(ctx, client.ObjectKey{
+				_ = k8sClient.Get(ctx, client.ObjectKey{
 					Namespace: "default",
 					Name:      resourceName,
 				}, updated)
@@ -207,7 +207,7 @@ var _ = Describe("MCPServer Controller", func() {
 
 			// Verify Deployment is updated
 			Eventually(func() int32 {
-				k8sClient.Get(ctx, client.ObjectKey{
+				_ = k8sClient.Get(ctx, client.ObjectKey{
 					Namespace: "default",
 					Name:      resourceName,
 				}, deployment)
@@ -253,7 +253,7 @@ var _ = Describe("MCPServer Controller", func() {
 
 			// Verify Deployment is updated
 			Eventually(func() string {
-				k8sClient.Get(ctx, client.ObjectKey{
+				_ = k8sClient.Get(ctx, client.ObjectKey{
 					Namespace: "default",
 					Name:      resourceName,
 				}, deployment)
